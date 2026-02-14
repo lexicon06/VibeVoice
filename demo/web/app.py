@@ -26,6 +26,13 @@ from vibevoice.modular.streamer import AudioStreamer
 
 import copy
 
+# Enable CUDA optimizations
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.enabled = True
+    print("[CUDA] Enabled TF32 and cudnn benchmark for faster inference")
+
 BASE = Path(__file__).parent
 SAMPLE_RATE = 24_000
 
@@ -43,7 +50,7 @@ class StreamingTTSService:
         self,
         model_path: str,
         device: str = "cuda",
-        inference_steps: int = 5,
+        inference_steps: int = 3,
     ) -> None:
         # Keep model_path as string for HuggingFace repo IDs (Path() converts / to \ on Windows)
         self.model_path = model_path

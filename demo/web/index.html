@@ -356,8 +356,13 @@
         </label>
         <label class="range-control">
           <span>Inference Steps</span>
-          <input id="inferenceSteps" type="range" min="5" max="20" step="1" value="5" />
-          <span class="range-value" id="stepsValue">5</span>
+          <input id="inferenceSteps" type="range" min="1" max="20" step="1" value="3" />
+          <span class="range-value" id="stepsValue">3</span>
+        </label>
+        <label class="range-control">
+          <span>Buffer (sec)</span>
+          <input id="bufferSize" type="range" min="0.1" max="3" step="0.1" value="1.0" />
+          <span class="range-value" id="bufferValue">1.0</span>
         </label>
         <button id="resetControls" type="button" class="secondary-btn">Reset Controls</button>
       </div>
@@ -386,7 +391,6 @@
 (() => {
   const SAMPLE_RATE = 24_000;
   const BUFFER_SIZE = 2048;
-  const PREBUFFER_SEC = 0.1;
 
   let audioCtx = null;
   let scriptNode = null;
@@ -401,12 +405,16 @@
   const controlBtn = document.getElementById('playback');
   const cfgSelect = document.getElementById('cfgScale');
   const stepsSelect = document.getElementById('inferenceSteps');
+  const bufferSelect = document.getElementById('bufferSize');
   const voiceSelect = document.getElementById('voiceSelect');
   const cfgValueLabel = document.getElementById('cfgValue');
   const stepsValueLabel = document.getElementById('stepsValue');
+  const bufferValueLabel = document.getElementById('bufferValue');
   const modelGeneratedLabel = document.getElementById('modelGenerated');
   const playbackElapsedLabel = document.getElementById('playbackElapsed');
   const logOutput = document.getElementById('logOutput');
+
+  let PREBUFFER_SEC = 1.0;
   const resetBtn = document.getElementById('resetControls');
   const saveBtn = document.getElementById('saveAudio');
 
@@ -489,10 +497,17 @@
     stepsValueLabel.textContent = Number(stepsSelect.value).toString();
   };
 
+  const updateBufferDisplay = () => {
+    PREBUFFER_SEC = Number(bufferSelect.value);
+    bufferValueLabel.textContent = PREBUFFER_SEC.toFixed(1);
+  };
+
   cfgSelect.addEventListener('input', updateCfgDisplay);
   stepsSelect.addEventListener('input', updateStepsDisplay);
+  bufferSelect.addEventListener('input', updateBufferDisplay);
   updateCfgDisplay();
   updateStepsDisplay();
+  updateBufferDisplay();
 
   const pad2 = value => value.toString().padStart(2, '0');
   const pad3 = value => value.toString().padStart(3, '0');
@@ -707,10 +722,12 @@
 
   resetBtn.addEventListener('click', () => {
     cfgSelect.value = '1.5';
-    stepsSelect.value = '5';
+    stepsSelect.value = '3';
+    bufferSelect.value = '1.0';
     updateCfgDisplay();
     updateStepsDisplay();
-    appendLog('[Frontend] Controls reset to defaults (CFG=1.5, Steps=5)');
+    updateBufferDisplay();
+    appendLog('[Frontend] Controls reset to defaults (CFG=1.5, Steps=3, Buffer=1.0s)');
   });
 
   if (promptInput) {
