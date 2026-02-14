@@ -11,6 +11,14 @@
 - Added CUDA optimizations (TF32, cudnn benchmark) in `demo/web/app.py`
 - Default inference steps reduced from 5 to 3 for faster generation
 - Default CFG scale set to 1.5
+- Added float32 matmul precision optimization
+
+### Engram-Inspired Optimizations (O(1) Lookups)
+- **Text Cache**: Stores previously generated audio in memory
+  - O(1) hash lookup for repeated text (same text + voice + settings)
+  - LRU eviction when cache is full (max 100 entries)
+  - Cache hits/misses tracked in logs
+  - First generation saves audio to cache, subsequent plays are instant
 
 ### UI Improvements
 - Added **Buffer slider** (0.1s - 3.0s) to control pre-buffering

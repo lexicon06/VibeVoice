@@ -62,6 +62,12 @@ class StreamingTTSService:
         self.voice_presets: Dict[str, Path] = {}
         self.default_voice_key: Optional[str] = None
         self._voice_cache: Dict[str, Tuple[object, Path, str]] = {}
+        
+        # Engram-inspired O(1) text cache - stores previously generated audio
+        self._text_cache: Dict[str, bytes] = {}
+        self._text_cache_max_size = 100
+        self._cache_hits = 0
+        self._cache_misses = 0
 
         if device == "mpx":
             print("Note: device 'mpx' detected, treating it as 'mps'.")
@@ -115,6 +121,11 @@ class StreamingTTSService:
                 print("Load model with SDPA successfully ")
             else:
                 raise e
+
+        # Enable torch optimizations
+        if self.device == "cuda":
+            torch.set_float32_matmul_precision('high')
+            print("[startup] Enabled float32 matmul precision optimization")
 
         self.model.eval()
 
@@ -365,6 +376,29 @@ async def _startup() -> None:
 
 def streaming_tts(text: str, **kwargs) -> Iterator[np.ndarray]:
     service: StreamingTTSService = app.state.tts_service
+    
+    # Engram-inspired: O(1) cache lookup for repeated text
+    cache_key = f"{kwargs.get('voice_key', '')}:{kwargs.get('cfg_scale', 1.5)}:{kwargs.get('inference_steps', 3)}:{text}"
+    
+    if cache_key in service._text_cache:
+        service._cache_hits += 1
+        print(f"[Cache] O(1) hit! ({service._cache_hits} hits, {service._cache_misses} misses)")
+        cached_audio = service._text_cache[cache_key]
+        # Yield cached audio in chunks
+        import io
+        import numpy as np
+        wav = io.BytesIO(cached_audio)
+        import wave
+        with wave.open(wav, 'rb') as wf:
+            frames = wf.readframes(wf.getnframes())
+            audio_data = np.frombuffer(frames, dtype=np.int16)
+            float_audio = audio_data.astype(np.float32) / 32768.0
+            chunk_size = 4096
+            for i in range(0, len(float_audio), chunk_size):
+                yield float_audio[i:i+chunk_size]
+        return
+    
+    service._cache_misses += 1
     yield from service.stream(text, **kwargs)
 
 @app.websocket("/stream")
@@ -444,6 +478,9 @@ async def websocket_stream(ws: WebSocket) -> None:
 
         stop_signal = threading.Event()
 
+        # Collect audio for caching (Engram-style O(1) lookup later)
+        collected_chunks = []
+        
         iterator = streaming_tts(
             text,
             cfg_scale=cfg_scale,
@@ -462,8 +499,33 @@ async def websocket_stream(ws: WebSocket) -> None:
                 await flush_logs()
                 chunk = await asyncio.to_thread(next, iterator, sentinel)
                 if chunk is sentinel:
+                    # Stream complete - save to cache (Engram-style O(1) lookup)
+                    if collected_chunks:
+                        import io
+                        import wave
+                        import numpy as np
+                        
+                        # Combine chunks
+                        full_audio = np.concatenate(collected_chunks)
+                        int16_audio = (full_audio * 32767).astype(np.int16)
+                        
+                        # Save as WAV
+                        wav_buffer = io.BytesIO()
+                        with wave.open(wav_buffer, 'wb') as wf:
+                            wf.setnchannels(1)
+                            wf.setsampwidth(2)
+                            wf.setframerate(24000)
+                            wf.writeframes(int16_audio.tobytes())
+                        
+                        # Store in cache with LRU eviction
+                        cache_key = f"{voice_param}:{cfg_scale}:{inference_steps}:{text}"
+                        if len(service._text_cache) >= service._text_cache_max_size:
+                            # Remove oldest entry
+                            service._text_cache.pop(next(iter(service._text_cache)))
+                        service._text_cache[cache_key] = wav_buffer.getvalue()
+                        print(f"[Cache] Saved audio to cache ({len(service._text_cache)} entries)")
                     break
-                chunk = cast(np.ndarray, chunk)
+                collected_chunks.append(chunk)  # Collect for caching
                 payload = service.chunk_to_pcm16(chunk)
                 await ws.send_bytes(payload)
                 if not first_ws_send_logged:
